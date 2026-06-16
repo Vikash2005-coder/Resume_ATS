@@ -1,0 +1,75 @@
+# Redrob Hackathon — Submission Metadata
+# Filename: submission_metadata.yaml
+
+# ============================================================================
+# Team identity
+# ============================================================================
+team_name: "TBD"  # FILL IN: Your team name (e.g. team_xxx)
+
+primary_contact:
+  name: "FILL IN"
+  email: "FILL IN"
+  phone: "FILL IN"
+
+team_members:
+  - name: "FILL IN"
+    email: "FILL IN"
+    role: "ML Engineer"
+
+# ============================================================================
+# Code and reproducibility
+# ============================================================================
+github_repo: "https://github.com/FILL_IN/reponame"
+sandbox_link: "https://huggingface.co/spaces/FILL_IN/redrob-ranker" # Streamlit or Hugging Face Space link
+
+reproduce_command: "python rank.py --candidates ./candidates.jsonl --out ./submission.csv"
+
+# ============================================================================
+# Compute environment
+# ============================================================================
+compute:
+  platform: "Local PC"
+  cpu_cores: 8
+  ram_gb: 16
+  python_version: "3.9.6"
+  os: "Windows 11"
+  uses_gpu_for_inference: false
+  has_network_during_ranking: false
+  pre_computation_required: true
+  pre_computation_time_minutes: 25
+
+# ============================================================================
+# AI tools declaration
+# ============================================================================
+ai_tools_used:
+  - "Claude"
+  - "Cursor"
+
+ai_usage_summary: |
+  Used Claude to outline the system architecture, design the scoring weights,
+  and write code for the honeypot detection. No candidate data was shared with 
+  external APIs.
+
+# ============================================================================
+# Approach summary (methodology)
+# ============================================================================
+methodology_summary: |
+  Hybrid retrieval ranking engine combining offline dense vector embeddings (generated
+  with local sentence-transformers all-MiniLM-L6-v2) and concept synonym mappings
+  for skills. Candidate matching is scored using a hierarchical 6-component formula:
+  Career Semantics (25%), Skills Match (20%), Title Fit (15%), Stated Experience
+  (15%), Behavioral Engagement (15%), and Availability (10%). Incorporates strict
+  expert-skill duration checking, experience validation, and timeline anomaly detection
+  to disqualify honeypots (Score = 0.0). Features a keyword-stuffing detector
+  (low description semantics + high skill density = 50% penalty). Ties are resolved
+  alphanumerically. Runs in under 90s on CPU.
+
+# ============================================================================
+# Declarations
+# ============================================================================
+declarations:
+  read_submission_spec: true
+  code_is_original_work: true
+  no_collusion: true
+  honeypot_check_done: true
+  reproduction_tested: true
