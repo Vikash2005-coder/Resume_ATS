@@ -1,9 +1,9 @@
 # Git ignore for Resume ATS project
 # Ignore datasets and large precomputed files to comply with GitHub's file size limit (100MB)
 
-[PUB] India_runs_data_and_ai_challenge/
+\[PUB\] India_runs_data_and_ai_challenge/
 candidate_embeddings.npy
-candidate_ids.json
+
 temp_candidates.jsonl
 test_out.csv
 __pycache__/
