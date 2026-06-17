@@ -117,18 +117,20 @@ def main():
         
     # 4. Load Pre-computed Candidate Embeddings
     embeddings_lookup = {}
-    vectors_path = os.path.join(base_dir, "candidate_embeddings.npy")
+    vectors_path = os.path.join(base_dir, "candidate_embeddings.npz")
     ids_path = os.path.join(base_dir, "candidate_ids.json")
     
     if os.path.exists(vectors_path) and os.path.exists(ids_path):
         print(f"Loading precomputed candidate embeddings from {vectors_path}...")
         try:
-            vectors = np.load(vectors_path)
+            with np.load(vectors_path) as data:
+                vectors = data["embeddings"]
             with open(ids_path, "r", encoding="utf-8") as f:
                 cids = json.load(f)
             if len(cids) == len(vectors):
                 for cid, vec in zip(cids, vectors):
-                    embeddings_lookup[cid] = vec
+                    # Cast float16 back to float32 for operations
+                    embeddings_lookup[cid] = vec.astype(np.float32)
                 print(f"Successfully loaded {len(embeddings_lookup)} candidate embeddings.")
             else:
                 print("Warning: Candidate ID count mismatch in precomputed vectors. Falling back to dynamic encoding.")
@@ -194,8 +196,8 @@ def main():
 
     # 6. Sort Candidates & Resolve Ties
     print("Sorting and selecting Top 100...")
-    # Sorting key: Score descending, then Candidate ID ascending alphanumeric order
-    scored_candidates.sort(key=lambda x: (-x["score"], x["candidate_id"]))
+    # Sorting key: Score descending (rounded to 4 decimals), then Candidate ID ascending alphanumeric order
+    scored_candidates.sort(key=lambda x: (-round(x["score"], 4), x["candidate_id"]))
     
     top_100 = scored_candidates[:100]
     
