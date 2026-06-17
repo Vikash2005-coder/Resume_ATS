@@ -16,7 +16,7 @@ from tqdm import tqdm
 torch.set_num_threads(os.cpu_count() or 4)
 
 CANDIDATES_PATH = r"e:\Resume ATS\[PUB] India_runs_data_and_ai_challenge\India_runs_data_and_ai_challenge\candidates.jsonl"
-OUTPUT_VECTORS_PATH = r"e:\Resume ATS\candidate_embeddings.npy"
+OUTPUT_VECTORS_PATH = r"e:\Resume ATS\candidate_embeddings.npz"
 OUTPUT_IDS_PATH = r"e:\Resume ATS\candidate_ids.json"
 
 def mean_pooling(model_output, attention_mask):
@@ -113,7 +113,7 @@ def main():
     
     # Save embeddings and ID mapping
     print(f"Saving embeddings to {OUTPUT_VECTORS_PATH}...")
-    np.save(OUTPUT_VECTORS_PATH, all_embeddings)
+    np.savez_compressed(OUTPUT_VECTORS_PATH, embeddings=all_embeddings.astype(np.float16))
     
     print(f"Saving candidate IDs to {OUTPUT_IDS_PATH}...")
     with open(OUTPUT_IDS_PATH, "w", encoding="utf-8") as out:
