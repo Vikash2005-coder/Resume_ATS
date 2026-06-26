@@ -33,7 +33,8 @@ from skills_config import (
     IRRELEVANT_TITLES, TIER5_CAREER_KEYWORDS,
     CAPABILITIES, PRODUCTION_KEYWORDS, TECH_DISPLAY, CAP_ACTIONS,
     CAPABILITY_DESCRIPTIONS, TITLE_LEVEL_MAP, TECH_GENERATIONS,
-    OWNERSHIP_VERBS, DOMAIN_GROUPS,
+    OWNERSHIP_VERBS, OWNERSHIP_VERBS_HIGH, OWNERSHIP_VERBS_MED, OWNERSHIP_VERBS_LOW,
+    DOMAIN_GROUPS, PROJECT_COMPLEXITY_KEYWORDS, JD_ALIGNED_TECHS,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,42 +82,53 @@ def calculate_career_relevance_score(career_history):
 
 
 # ---------------------------------------------------------------------------
-# 2. Evidence Strength — ownership verb detection
+# 2. Evidence Strength — Tiered ownership verb scoring (Phase 4)
 # ---------------------------------------------------------------------------
 def calculate_evidence_strength(career_history):
     """
-    Detects high-ownership verbs in career descriptions.
-    Rewards candidates who clearly claim ownership of their work.
-    Returns float in [0, 1].
+    Tiered ownership verb detection. Distinguishes strong authorship language
+    ("architected", "built from scratch") from generic execution language
+    ("built", "deployed") and passive filler ("worked on", "helped with").
+
+    Score = (high_hits * 1.0 + med_hits * 0.5 - low_hits * 0.15) / 5.0
+    Clamped to [0, 1]. 5+ high-value claims = 1.0.
     """
     if not career_history:
         return 0.0
     combined = " ".join(
         role.get("description", "").lower() for role in career_history
     )
-    found = sum(1 for verb in OWNERSHIP_VERBS if verb in combined)
-    # 5+ distinct ownership verbs → 1.0
-    return min(1.0, found / 5.0)
+    high_hits = sum(1 for v in OWNERSHIP_VERBS_HIGH if v in combined)
+    med_hits  = sum(1 for v in OWNERSHIP_VERBS_MED  if v in combined)
+    low_hits  = sum(1 for v in OWNERSHIP_VERBS_LOW  if v in combined)
+
+    raw = high_hits * 1.0 + med_hits * 0.5 - low_hits * 0.15
+    return max(0.0, min(1.0, raw / 5.0))
 
 
 # ---------------------------------------------------------------------------
-# 3. Production Readiness Score (10%) — 12 independent dimensions
+# 3. Production Readiness Score (12%) — density scoring per dimension
 # ---------------------------------------------------------------------------
 def calculate_production_score(career_history):
     """
     Evaluates production deployment maturity across 12 conceptual dimensions.
-    Each dimension is binary (found/not found); score = fraction evidenced.
-    Final score is continuous [0, 1] — more dimensions = higher score.
+    Each dimension now uses DENSITY scoring instead of binary present/absent:
+      0 hits → 0.0
+      1 hit  → 0.33
+      2 hits → 0.67
+      3+ hits → 1.0
+    This rewards descriptions with multiple corroborating production signals
+    over single-keyword mentions. Score = mean across all 12 dimensions.
     """
     combined = " ".join(
         role.get("description", "") for role in career_history
     ).lower()
 
-    dimensions_found = sum(
-        1 for dim_keywords in PRODUCTION_KEYWORDS.values()
-        if any(kw in combined for kw in dim_keywords)
-    )
-    return dimensions_found / len(PRODUCTION_KEYWORDS)
+    dim_scores = [
+        min(1.0, sum(1 for kw in dim_kws if kw in combined) / 3.0)
+        for dim_kws in PRODUCTION_KEYWORDS.values()
+    ]
+    return sum(dim_scores) / len(dim_scores) if dim_scores else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +247,30 @@ def _get_role_start_year(role):
         return 2000
 
 
+def _calculate_role_impact(role):
+    """
+    Scores a single role's organisational impact using description richness
+    and scale-of-work indicators. Used as a company-progression proxy.
+    """
+    desc = role.get("description", "").lower()
+    word_count = len(desc.split())
+    richness = min(1.0, word_count / 120.0)  # 120+ words = max richness
+
+    impact_words = [
+        "billion", "million", "global", "enterprise", "large-scale",
+        "distributed", "platform", "infrastructure", "at scale",
+    ]
+    impact_hits = sum(1 for w in impact_words if w in desc)
+    impact_score = min(1.0, impact_hits / 3.0)  # 3+ = full score
+
+    return 0.55 * richness + 0.45 * impact_score
+
+
 def calculate_progression_score(career_history):
     """
     Rewards genuine upward career movement.
-    Signals: net title level gain, tenure stability, peak seniority, no large drops.
+    Signals: net title level gain, tenure stability, peak seniority,
+    no large drops, and role-impact progression (company intelligence proxy).
     Returns float in [0, 1].
     """
     if not career_history:
@@ -269,11 +301,19 @@ def calculate_progression_score(career_history):
     # Peak seniority bonus
     peak_score = min(1.0, max(levels) / 5.0)
 
+    # Role-impact progression: did responsibilities grow across roles?
+    role_impacts = [_calculate_role_impact(r) for r in sorted_roles]
+    mid = max(1, len(role_impacts) // 2)
+    early_impact = sum(role_impacts[:mid]) / mid
+    late_impact = sum(role_impacts[mid:]) / max(1, len(role_impacts) - mid)
+    impact_progression = min(1.0, max(0.0, (late_impact - early_impact + 0.5) / 1.0))
+
     return (
-        0.40 * progression_score +
-        0.25 * stability_score +
-        0.20 * consistency_score +
-        0.15 * peak_score
+        0.35 * progression_score +
+        0.20 * stability_score +
+        0.18 * consistency_score +
+        0.15 * peak_score +
+        0.12 * impact_progression   # company/role progression intelligence
     )
 
 
@@ -283,7 +323,9 @@ def calculate_progression_score(career_history):
 def calculate_learning_velocity(career_history, skills):
     """
     Measures how quickly a candidate adopts newer technologies.
-    Rewards transition from foundational → modern → cutting-edge stacks.
+    Phase 4: JD-aligned technologies (RAG, vLLM, QLoRA, vector DBs, etc.)
+    receive a 1.5x multiplier in the generation count to reward candidates
+    who are proficient in exactly the technologies the role requires.
     Returns float in [0, 1].
     """
     sorted_roles = sorted(career_history, key=_get_role_start_year)
@@ -292,41 +334,45 @@ def calculate_learning_velocity(career_history, skills):
     for role in sorted_roles:
         year = _get_role_start_year(role)
         desc = (role.get("description", "") + " " + role.get("title", "")).lower()
-        max_gen = 1
+        role_max_gen = 1.0
         for tech, gen in TECH_GENERATIONS.items():
             if tech in desc:
-                max_gen = max(max_gen, gen)
-        gen_by_period.append((year, max_gen))
+                # JD-aligned techs get a 1.5x multiplier (capped at gen 5)
+                effective_gen = gen * 1.5 if tech in JD_ALIGNED_TECHS else gen
+                role_max_gen = max(role_max_gen, effective_gen)
+        gen_by_period.append((year, role_max_gen))
 
     # Skills list enriches the picture (no dates, but reflects current knowledge)
     all_skill_text = " ".join(s.get("name", "").lower() for s in skills)
-    max_skill_gen = 1
+    max_skill_gen = 1.0
     for tech, gen in TECH_GENERATIONS.items():
         if tech in all_skill_text:
-            max_skill_gen = max(max_skill_gen, gen)
+            effective_gen = gen * 1.5 if tech in JD_ALIGNED_TECHS else gen
+            max_skill_gen = max(max_skill_gen, effective_gen)
 
     if not gen_by_period:
-        return min(1.0, max_skill_gen / 5.0) * 0.6
+        return min(1.0, max_skill_gen / 7.5) * 0.6  # 7.5 = 5 * 1.5 max
 
     max_gen_reached = max(g for _, g in gen_by_period)
     max_gen_reached = max(max_gen_reached, max_skill_gen)
 
-    # Peak generation score (0–5 → 0–1)
-    peak_score = min(1.0, max_gen_reached / 5.0)
+    # Peak generation score (0–7.5 effective range → 0–1)
+    peak_score = min(1.0, max_gen_reached / 7.5)
 
     # Velocity: did they adopt newer tech over time?
     mid = max(1, len(gen_by_period) // 2)
     early_gens = [g for _, g in gen_by_period[:mid]]
-    late_gens = [g for _, g in gen_by_period[mid:]]
+    late_gens  = [g for _, g in gen_by_period[mid:]]
     if late_gens:
         early_avg = sum(early_gens) / len(early_gens)
-        late_avg = sum(late_gens) / len(late_gens)
-        velocity_score = min(1.0, max(0.0, (late_avg - early_avg + 2.0) / 4.0))
+        late_avg  = sum(late_gens) / len(late_gens)
+        # Map delta (-7.5..+7.5) → (0..1)
+        velocity_score = min(1.0, max(0.0, (late_avg - early_avg + 3.0) / 6.0))
     else:
         velocity_score = 0.5
 
     # Diversity: not stuck in a single era
-    unique_gens = len(set(g for _, g in gen_by_period))
+    unique_gens = len(set(round(g) for _, g in gen_by_period))
     diversity_score = min(1.0, unique_gens / 3.0)
 
     return (
@@ -373,6 +419,30 @@ def calculate_consistency_score(career_history):
         0.30 * recent_relevance +
         0.20 * max(0.0, 1.0 - (unrelated_count / total) * 2)
     )
+
+
+# ---------------------------------------------------------------------------
+# 10a. Project Complexity Score (2%) — Phase 4 addition
+# ---------------------------------------------------------------------------
+def calculate_project_complexity_score(career_history):
+    """
+    Measures engineering complexity beyond simple production keyword presence.
+    5 dimensions each scored by hit density (0–1 per dim), averaged.
+    Rewards: billion-scale work, distributed systems, production AI infra,
+    high-throughput pipelines, and deep ownership language.
+    Returns float in [0, 1].
+    """
+    if not career_history:
+        return 0.0
+    combined = " ".join(
+        role.get("description", "") for role in career_history
+    ).lower()
+
+    dim_scores = [
+        min(1.0, sum(1 for kw in dim_kws if kw in combined) / 2.0)
+        for dim_kws in PROJECT_COMPLEXITY_KEYWORDS.values()
+    ]
+    return sum(dim_scores) / len(dim_scores) if dim_scores else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +674,7 @@ def generate_reasoning(candidate, semantic_score, skills_score, career_relevance
                         production_score, assessment_score, final_score, rank=None,
                         progression_score=0.0, velocity_score=0.0,
                         consistency_score=0.5, evidence_strength=0.0,
-                        semantic_cap_scores=None):
+                        semantic_cap_scores=None, complexity_score=0.0):
     """
     Generates a structured, deterministic recruiter-style explanation.
     Format: Strengths | Concerns | Assessment
@@ -700,6 +770,10 @@ def generate_reasoning(candidate, semantic_score, skills_score, career_relevance
         strengths.append(f"Strong verified assessment scores ({assessment_score:.0%})")
     if evidence_strength >= 0.60:
         strengths.append("High-ownership language in career descriptions")
+    if complexity_score >= 0.50:
+        strengths.append("Large-scale / distributed engineering evidence")
+    elif complexity_score >= 0.30:
+        strengths.append("Non-trivial engineering complexity evidenced")
 
     # --- Build Concerns list ---
     concerns = _build_concerns(signals, years_exp, activity_score)
@@ -810,32 +884,42 @@ def evaluate_candidate(candidate, semantic_score, semantic_cap_scores=None,
         s_progression = calculate_progression_score(career)
         s_velocity = calculate_learning_velocity(career, skills)
         s_consistency = calculate_consistency_score(career)
+        s_complexity = calculate_project_complexity_score(career)
         evidence_strength = calculate_evidence_strength(career)
 
-        # Semantic capability relevance
+        # Semantic capability relevance (primary if available, keyword fallback otherwise)
         if semantic_cap_scores is not None:
-            raw_cap = sum(semantic_cap_scores.values()) / len(semantic_cap_scores)
+            # Weight top-2 capabilities more (semantic primary signal)
+            sorted_caps = sorted(semantic_cap_scores.values(), reverse=True)
+            if len(sorted_caps) >= 2:
+                top2_avg = (sorted_caps[0] + sorted_caps[1]) / 2.0
+                rest_avg = sum(sorted_caps[2:]) / max(1, len(sorted_caps) - 2)
+                raw_cap = 0.60 * top2_avg + 0.40 * rest_avg
+            else:
+                raw_cap = sum(sorted_caps) / len(sorted_caps)
             career_relevance = min(1.0, raw_cap + 0.12 * evidence_strength)
         else:
             career_relevance = calculate_career_relevance_score(career)
 
-        # Blended semantic: cosine + capability relevance
+        # Blended semantic: cosine + semantic capability relevance
         blended_semantic = 0.70 * semantic_score + 0.30 * career_relevance
 
         # Keyword stuffing — logistic multiplier
         stuffing_mult = calculate_stuffing_multiplier(skills, semantic_score, career)
 
-        # 9-component formula (weights sum to 1.00)
+        # 10-component formula (weights sum to 1.00)
+        # Behavioral reduced 13% → 9%; weight redistributed to semantic, production, complexity
         raw_score = (
-            0.25 * blended_semantic +
-            0.18 * s_skills +
-            0.13 * s_behavior +
+            0.27 * blended_semantic +
+            0.17 * s_skills +
             0.12 * s_experience +
-            0.10 * s_production +
-            0.07 * s_availability +
+            0.12 * s_production +
+            0.09 * s_behavior +
+            0.06 * s_availability +
             0.05 * s_assessment +
             0.05 * s_progression +
-            0.05 * s_velocity
+            0.05 * s_velocity +
+            0.02 * s_complexity
         )
 
         final_score = raw_score * stuffing_mult
@@ -858,6 +942,7 @@ def evaluate_candidate(candidate, semantic_score, semantic_cap_scores=None,
             consistency_score=s_consistency,
             evidence_strength=evidence_strength,
             semantic_cap_scores=semantic_cap_scores,
+            complexity_score=s_complexity,
         )
     else:
         # --- Stage 1 fast approximation (no text scanning) ---
