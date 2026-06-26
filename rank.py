@@ -1,18 +1,17 @@
 # rank.py
 """
-Candidate Intelligence Engine - Ranking CLI (Phase 2)
-Three-stage ranking architecture:
-  Stage 1: Fast retrieval on all 100,000 candidates → Top 1000   [A6: was 500]
-  Stage 2: Deep re-ranking with full scoring on Top 1000 → Top 200
-  Stage 3: Cross-encoder re-ranking of Top 200 → Final Top 100   [Option C: new]
+Candidate Intelligence Engine - Ranking CLI (Phase 3)
+Three-stage ranking architecture (architecture unchanged):
+  Stage 1: Fast retrieval on all 100,000 candidates → Top 1000
+  Stage 2: Deep re-ranking with full 9-component scoring on Top 1000 → Top 200
+  Stage 3: Cross-encoder re-ranking of Top 200 → Final Top 100
 
-Changes:
-  A1: Uses BAAI/bge-small-en-v1.5 with BGE query prefix for better retrieval
-  A2: construct_career_text now weights recent roles with more character budget
-  A6: STAGE1_POOL increased from 500 → 1000 for a safer candidate buffer
-  A5: Rank passed to evaluate_candidate() for rank-aware reasoning
-  Option C: Cross-encoder (cross-encoder/ms-marco-MiniLM-L-6-v2) added as Stage 3
-            to re-rank Top 200 candidates — dramatically improves top-10 quality
+Phase 3 additions (within existing stages, no architecture change):
+  B1: Capability embeddings pre-computed at startup using BGE-small (< 0.5s)
+  B2: Stage 1 stores candidate embedding vectors alongside scores
+  B3: Stage 2 batch-computes semantic cap scores via dot-product (< 5ms for 1000 candidates)
+  B4: Dynamic cross-encoder fusion: CE weight adapts via sigmoid based on semantic_score
+      (high semantic → deep score has more say; moderate → CE dominates)
 """
 
 import os
@@ -29,6 +28,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from honeypot_detector import is_honeypot
 from scorer import evaluate_candidate
+from skills_config import CAPABILITY_DESCRIPTIONS
 
 torch.set_num_threads(os.cpu_count() or 4)
 
@@ -248,6 +248,30 @@ def main():
         jd_vec = jd_embedding.cpu().numpy()
 
     # -------------------------------------------------------------------------
+    # 3b. Pre-compute Capability Embeddings (B1) — < 0.5s, done once at startup
+    #     These 6 vectors are used in Stage 2 to compute semantic cap scores
+    #     via a batch dot-product matrix multiply (< 5ms for 1000 candidates).
+    # -------------------------------------------------------------------------
+    print("Pre-computing capability embeddings (6 descriptions)...")
+    cap_names = list(CAPABILITY_DESCRIPTIONS.keys())
+    cap_texts = list(CAPABILITY_DESCRIPTIONS.values())
+    cap_vecs = []  # shape will be (6, embedding_dim)
+
+    with torch.no_grad():
+        for cap_text in cap_texts:
+            enc = tokenizer(
+                cap_text, padding=True, truncation=True,
+                max_length=256, return_tensors="pt"
+            )
+            out = model(**enc)
+            emb = mean_pooling(out, enc["attention_mask"])[0]
+            emb = emb / torch.norm(emb, p=2)
+            cap_vecs.append(emb.cpu().numpy())
+
+    cap_matrix = np.stack(cap_vecs, axis=0)  # (6, embedding_dim)
+    print(f"Capability matrix ready: {cap_matrix.shape}")
+
+    # -------------------------------------------------------------------------
     # 4. Load Pre-Computed Candidate Embeddings
     # -------------------------------------------------------------------------
     embeddings_lookup = {}
@@ -332,7 +356,8 @@ def main():
                 "candidate_id": cid,
                 "data": c,
                 "semantic_score": semantic_score,
-                "stage1_score": fast_score
+                "stage1_score": fast_score,
+                "embedding": c_vec,   # B2: stored for Stage 2 dot-product
             })
 
     stage1_candidates.sort(key=lambda x: -x["stage1_score"])
@@ -343,6 +368,20 @@ def main():
     print(f"  Top pool selected: {len(top_pool)}")
     print(f"  Honeypots filtered: {len(honeypot_scored)}")
     print(f"  Below threshold: {len(below_pool)}")
+
+    # -------------------------------------------------------------------------
+    # B3: Batch semantic capability scores for all top_pool candidates
+    #     One matrix multiply: (N x D) @ (D x 6) = (N x 6) — runs in < 5ms
+    # -------------------------------------------------------------------------
+    print("\nComputing semantic capability scores (batch dot-product)...")
+    pool_vecs = np.stack([e["embedding"] for e in top_pool], axis=0)  # (N, D)
+    cap_score_matrix = pool_vecs @ cap_matrix.T                        # (N, 6)
+    # Build per-candidate dict {cap_name: score}
+    semantic_cap_scores_map = {
+        entry["candidate_id"]: dict(zip(cap_names, cap_score_matrix[i].tolist()))
+        for i, entry in enumerate(top_pool)
+    }
+    print(f"Semantic capability scores ready for {len(semantic_cap_scores_map)} candidates.")
 
     # -------------------------------------------------------------------------
     # STAGE 2: Deep Re-Ranking on Top 1000 → Top 200
@@ -357,16 +396,20 @@ def main():
         c = entry["data"]
         cid = entry["candidate_id"]
         semantic_score = entry["semantic_score"]
+        sem_cap_scores = semantic_cap_scores_map.get(cid)  # B3: per-candidate cap scores
 
-        final_score, reasoning, is_stuffing = evaluate_candidate(
-            c, semantic_score, deep=True, rank=None  # rank assigned after sorting
+        final_score, reasoning, stuffing_mult = evaluate_candidate(
+            c, semantic_score,
+            semantic_cap_scores=sem_cap_scores,  # B3: semantic capability scores
+            deep=True, rank=None
         )
 
         stage2_results.append({
             "candidate_id": cid,
             "data": c,
             "score": final_score,
-            "reasoning": reasoning
+            "reasoning": reasoning,
+            "semantic_score": semantic_score,  # B4: stored for dynamic CE fusion
         })
 
     # Sort Stage 2 results and pick Top 200 for cross-encoder
@@ -391,16 +434,24 @@ def main():
         if ce_model is not None:
             ce_scores = cross_encoder_score(ce_model, ce_tokenizer, jd_text, top_ce_pool)
 
-            # Blend: 60% cross-encoder + 40% Stage 2 score for stability
+            # B4: Dynamic fusion — CE weight adapts via sigmoid on semantic_score.
+            #   High semantic similarity → deep score signals (availability, experience)
+            #     matter more → lower CE weight.
+            #   Moderate semantic → CE can find matches the bi-encoder missed → higher CE weight.
+            #   ce_weight range: ~0.35 (sem=0.80) to ~0.65 (sem=0.40)
+            import math as _math
             for entry in top_ce_pool:
                 cid = entry["candidate_id"]
                 ce_score = ce_scores.get(cid, 0.5)
-                entry["final_score"] = 0.60 * ce_score + 0.40 * entry["score"]
+                sem = entry.get("semantic_score", 0.60)
+                # sigmoid: higher sem → lower ce_weight
+                ce_weight = 0.35 + 0.30 * (1.0 / (1.0 + _math.exp(10.0 * (sem - 0.60))))
+                entry["final_score"] = ce_weight * ce_score + (1.0 - ce_weight) * entry["score"]
 
             top_ce_pool.sort(
                 key=lambda x: (-round(x["final_score"], 4), x["candidate_id"])
             )
-            print("Stage 3 complete. Final ranking uses blended cross-encoder + deep score.")
+            print("Stage 3 complete. Final ranking uses dynamic sigmoid CE fusion.")
         else:
             # Fall back: use Stage 2 score as final
             for entry in top_ce_pool:
@@ -419,11 +470,17 @@ def main():
 
     for rank_idx, entry in enumerate(top_100, 1):
         c = entry["data"]
+        cid = entry["candidate_id"]
         semantic_score = next(
-            (e["semantic_score"] for e in top_pool if e["candidate_id"] == entry["candidate_id"]),
+            (e["semantic_score"] for e in top_pool if e["candidate_id"] == cid),
             0.5
         )
-        _, reasoning, _ = evaluate_candidate(c, semantic_score, deep=True, rank=rank_idx)
+        sem_cap_scores = semantic_cap_scores_map.get(cid)
+        _, reasoning, _ = evaluate_candidate(
+            c, semantic_score,
+            semantic_cap_scores=sem_cap_scores,
+            deep=True, rank=rank_idx
+        )
         entry["reasoning"] = reasoning
 
     # -------------------------------------------------------------------------
