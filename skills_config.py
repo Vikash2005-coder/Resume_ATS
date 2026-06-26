@@ -56,50 +56,158 @@ CORE_CONCEPTS = {
     }
 }
 
-# --- Capability Groups for Career Relevance Scoring ---
+# ---------------------------------------------------------------------------
+# Capability Groups for Career Relevance Scoring (6 groups)
 # Each group represents a distinct recruiter-facing competency.
 # A capability is "found" if ANY of its keywords appear in career descriptions.
+# Keywords expanded with semantic equivalents to avoid missing synonymous terms.
+# ---------------------------------------------------------------------------
 CAPABILITIES = {
     "retrieval": [
         "retrieval", "semantic search", "vector search",
         "hybrid search", "dense retrieval", "information retrieval",
-        "search engine", "search infrastructure"
+        "search engine", "search infrastructure", "search platform",
+        "search systems", "search relevance", "document retrieval",
+        "passage retrieval", "text retrieval"
     ],
     "ranking": [
         "ranking", "learning to rank", "relevance optimization",
         "re-ranking", "ranking pipeline", "ranking algorithm",
-        "ranking system", "ranking engine"
+        "ranking system", "ranking engine", "search relevance",
+        "feed ranking", "content ranking", "result ranking",
+        "ltr", "pointwise", "pairwise", "listwise"
     ],
     "recommendation": [
         "recommendation", "recommendation system", "recommendation engine",
-        "recommender", "collaborative filtering", "content-based filtering"
+        "recommender", "collaborative filtering", "content-based filtering",
+        "personalization", "content discovery", "user recommendations",
+        "product recommendations", "item recommendations", "feed personalization",
+        "user personalization", "personalised"
     ],
     "matching": [
-        "matching", "candidate discovery", "matching infrastructure",
-        "candidate matching", "entity matching", "similarity matching"
+        "matching", "candidate matching", "matching infrastructure",
+        "entity matching", "entity resolution", "similarity search",
+        "profile matching", "nearest neighbor", "semantic similarity",
+        "candidate discovery", "approximate nearest neighbor",
+        "ann search", "knn", "k-nn"
+    ],
+    "vector_database": [
+        "milvus", "pinecone", "qdrant", "faiss",
+        "weaviate", "chroma", "pgvector", "vespa",
+        "vector database", "vector databases", "vector store",
+        "opensearch", "elasticsearch", "annoy",
+        "vector index", "embedding index"
+    ],
+    "llm_finetuning": [
+        "llm", "large language model", "gpt", "llama",
+        "mistral", "gemma", "qwen", "bert", "transformers",
+        "fine tuning", "fine-tuning", "lora", "qlora",
+        "peft", "instruction tuning", "rlhf", "dpo", "sft",
+        "pretrained model", "foundation model", "language model"
     ]
 }
 
-# --- Production Readiness Keyword Dimensions ---
+# ---------------------------------------------------------------------------
+# Production Readiness Keyword Dimensions
+# Each dimension is treated as a single binary concept (found / not found).
+# Synonyms within a dimension are grouped to avoid double-counting.
+# Final production score = fraction of dimensions evidenced.
+# ---------------------------------------------------------------------------
 PRODUCTION_KEYWORDS = {
     "deployment": [
         "production", "deployed", "deployment", "live",
-        "release", "shipped", "rollout", "launch"
+        "release", "shipped", "rollout", "launch", "productionized"
     ],
     "scale": [
         "latency", "real-time", "millions of requests", "scalable",
         "high throughput", "low latency", "at scale", "billion",
-        "traffic", "qps", "tps"
+        "traffic", "qps", "tps", "large scale", "massive scale"
     ],
     "reliability": [
         "monitoring", "observability", "high availability",
-        "uptime", "sla", "alerting", "incident", "reliability"
+        "uptime", "sla", "alerting", "incident", "reliability",
+        "incident response", "fault tolerance"
     ],
     "engineering": [
         "ci/cd", "microservices", "automation",
         "devops", "infrastructure as code", "terraform",
-        "docker", "kubernetes", "load balancing"
+        "docker", "kubernetes", "load balancing",
+        "containerization", "orchestration"
     ]
+}
+
+# ---------------------------------------------------------------------------
+# Technology display names for evidence extraction in explanations
+# Maps lowercase keywords found in career text → display name for reasoning
+# ---------------------------------------------------------------------------
+TECH_DISPLAY = {
+    "faiss": "FAISS",
+    "milvus": "Milvus",
+    "pinecone": "Pinecone",
+    "qdrant": "Qdrant",
+    "weaviate": "Weaviate",
+    "chroma": "Chroma",
+    "pgvector": "pgvector",
+    "elasticsearch": "Elasticsearch",
+    "opensearch": "OpenSearch",
+    "vespa": "Vespa",
+    "llama": "LLaMA",
+    "mistral": "Mistral",
+    "gemma": "Gemma",
+    "gpt-4": "GPT-4",
+    "gpt-3": "GPT-3",
+    "bert": "BERT",
+    "lora": "LoRA",
+    "qlora": "QLoRA",
+    "peft": "PEFT",
+    "pytorch": "PyTorch",
+    "tensorflow": "TensorFlow",
+    "spark": "Apache Spark",
+    "kafka": "Kafka",
+    "redis": "Redis",
+    "kubernetes": "Kubernetes",
+    "docker": "Docker",
+    "bm25": "BM25",
+    "colbert": "ColBERT",
+    "sentence-transformers": "Sentence-Transformers",
+    "sentence transformers": "Sentence-Transformers",
+}
+
+# ---------------------------------------------------------------------------
+# Capability action phrases used in evidence-based reasoning generation
+# Maps capability name → list of description phrases (in priority order)
+# ---------------------------------------------------------------------------
+CAP_ACTIONS = {
+    "retrieval": [
+        "retrieval and semantic search systems",
+        "hybrid retrieval pipelines",
+        "search infrastructure",
+    ],
+    "ranking": [
+        "ranking and relevance scoring systems",
+        "learning-to-rank pipelines",
+        "relevance optimization infrastructure",
+    ],
+    "recommendation": [
+        "recommendation engines",
+        "personalization and content discovery systems",
+        "collaborative filtering infrastructure",
+    ],
+    "matching": [
+        "candidate matching and similarity search systems",
+        "entity resolution pipelines",
+        "nearest-neighbor matching infrastructure",
+    ],
+    "vector_database": [
+        "vector search and embedding-based retrieval",
+        "vector database infrastructure",
+        "dense embedding pipelines",
+    ],
+    "llm_finetuning": [
+        "LLM fine-tuning workflows",
+        "transformer model optimization (LoRA/PEFT)",
+        "instruction-tuned LLM systems",
+    ],
 }
 
 # --- Title Classification ---
@@ -137,7 +245,7 @@ IRRELEVANT_TITLES = [
     "devops engineer", "site reliability engineer"
 ]
 
-# Text phrases in job descriptions to look for when identifying Tier-5 "hidden gem" candidates
+# Text phrases in job descriptions to look for when identifying "hidden gem" candidates
 TIER5_CAREER_KEYWORDS = [
     "recommendation system", "recommendation systems", "recommendation engine",
     "search engine", "search infrastructure", "information retrieval",
