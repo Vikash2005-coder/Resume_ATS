@@ -292,15 +292,90 @@ TECH_GENERATIONS = {
 }
 
 # ---------------------------------------------------------------------------
-# Ownership Verbs — for semantic evidence strength scoring
-# Rewards candidates who claim clear ownership of their work.
+# Ownership Verbs — Tiered evidence strength (Phase 4 refinement)
+# HIGH: clear authorship/leadership (1.0 each)  
+# MED:  direct execution (0.5 each)
+# LOW:  passive/supporting (−0.15 penalty each — generic filler language)
 # ---------------------------------------------------------------------------
-OWNERSHIP_VERBS = [
-    "designed", "architected", "built", "implemented", "developed",
-    "optimized", "deployed", "scaled", "owned", "created",
-    "led", "pioneered", "established", "engineered", "authored",
-    "launched", "shipped", "drove", "spearheaded", "delivered",
+OWNERSHIP_VERBS_HIGH = [
+    "architected", "designed", "spearheaded", "pioneered",
+    "built end-to-end", "built from scratch", "led the development",
+    "founded", "owned end-to-end", "established", "authored",
+    "drove the", "led the design", "created from scratch",
 ]
+OWNERSHIP_VERBS_MED = [
+    "built", "implemented", "developed", "deployed", "scaled",
+    "optimized", "owned", "created", "launched", "shipped",
+    "delivered", "led", "engineered", "rewrote", "migrated",
+    "designed",
+]
+OWNERSHIP_VERBS_LOW = [
+    "worked on", "helped with", "assisted", "contributed to",
+    "participated in", "was part of", "involved in", "supported",
+    "used", "leveraged",
+]
+# Keep the original flat list for backwards compat
+OWNERSHIP_VERBS = OWNERSHIP_VERBS_HIGH + OWNERSHIP_VERBS_MED
+
+# ---------------------------------------------------------------------------
+# Project Complexity Keywords — 5 independent dimensions (Phase 4)
+# Each dimension uses density scoring: more hits = higher sub-score.
+# Measures how large / hard the engineering work was, not just whether shipped.
+# ---------------------------------------------------------------------------
+PROJECT_COMPLEXITY_KEYWORDS = {
+    "scale": [
+        "billion", "billions of", "millions of requests", "millions of users",
+        "petabyte", "terabyte", "internet scale", "large-scale", "massive scale",
+        "web-scale", "global scale", "at scale"
+    ],
+    "distributed": [
+        "distributed system", "distributed systems", "distributed computing",
+        "distributed training", "distributed inference", "microservices",
+        "service mesh", "event-driven", "streaming pipeline", "real-time pipeline",
+        "stream processing", "message queue"
+    ],
+    "production_ai": [
+        "production llm", "llm serving", "model serving at scale",
+        "vector search at scale", "inference pipeline",
+        "ml platform", "ai platform", "ai infrastructure",
+        "rag pipeline", "production rag", "embedding pipeline"
+    ],
+    "high_throughput": [
+        "high throughput", "low latency", "sub-millisecond",
+        "thousands of requests", "high qps", "qps", "tps",
+        "high availability", "99.9", "five nines", "real-time serving"
+    ],
+    "engineering_depth": [
+        "end-to-end", "from scratch", "ground up",
+        "built the entire", "led the design", "architected the",
+        "designed the system", "owned the", "built and deployed"
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# JD-Aligned Technologies — Phase 4 velocity bonus
+# Technologies directly mentioned or implied in the Senior AI Engineer JD.
+# These get a 1.5x weight multiplier inside learning velocity scoring.
+# ---------------------------------------------------------------------------
+JD_ALIGNED_TECHS = {
+    # Retrieval / RAG (core JD requirement)
+    "rag", "retrieval augmented", "dense retrieval", "hybrid search",
+    "sentence-transformers", "sentence transformers", "bge", "e5",
+    "colbert", "splade", "dpr",
+    # Vector Databases
+    "pinecone", "weaviate", "qdrant", "milvus", "chroma",
+    "pgvector", "faiss", "vespa", "opensearch",
+    # Ranking & Evaluation
+    "learning to rank", "ndcg", "mrr", "bm25", "re-ranking",
+    # LLM Fine-tuning
+    "lora", "qlora", "peft", "rlhf", "dpo", "sft",
+    "instruction tuning", "fine-tuning",
+    # Agentic / Modern infra
+    "langgraph", "llamaindex", "llama-index", "langchain",
+    "vllm", "tgi", "ray", "speculative decoding",
+    # Evaluation frameworks
+    "ragas", "trulens", "deepeval",
+}
 
 # ---------------------------------------------------------------------------
 # Domain Groups — for career consistency scoring
